@@ -23,20 +23,19 @@ const CHAT_SYSTEM_INSTRUCTION = `You are 'Cloudy', a helpful and friendly AI ass
 
 export async function generateVisionResponse(prompt: string, imageBase64: string): Promise<string> {
   try {
-    const imagePart = {
-      inlineData: {
-        mimeType: 'image/jpeg',
-        data: imageBase64,
+    const contents = [
+      { text: prompt },
+      {
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: imageBase64,
+        },
       },
-    };
-
-    const textPart = {
-      text: prompt,
-    };
+    ];
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: { parts: [textPart, imagePart] },
+      contents: contents,
       config: {
         systemInstruction: VOICE_AGENT_SYSTEM_INSTRUCTION,
       },

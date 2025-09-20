@@ -1,0 +1,17 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+ALWAYS REMEMBER THE ORIGINAL CONTEXT !!
+Input Stream Integrity: Ensure the real-time audio and screen share data streams are delivered to the Gemini Live API without loss or corruption.
+
+Contextual Cohesion: Verify that the Gemini Live API's internal STT, VAD, and VLM outputs are seamlessly combined to form a unified, accurate context for the LLM.
+
+Session State Consistency: Maintain accurate and up-to-date conversational history and session parameters in the database, ensuring the AI's responses are grounded in the ongoing interaction.
+
+Turn-Taking Precision: Strictly adhere to the Gemini Live API's Voice Activity Detection (VAD) signals to correctly identify user speech boundaries and avoid premature responses or interruptions.
+
+Response Fidelity: Ensure the synthesized speech (TTS) from Gemini Live precisely matches the generated textual response, preventing any discrepancy in the AI's spoken output.
+
+Error-Driven Silence: If critical input streams or API responses are incomplete or erroneous, the system should default to clarification or silence rather than generating speculative responses.

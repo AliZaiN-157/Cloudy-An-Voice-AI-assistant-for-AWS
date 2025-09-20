@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage } from './components/LoginPage';
-import { VoiceAgentPage } from './components/VoiceAgentPage';
+import VoiceAgentPage from './components/VoiceAgentPage';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatInterface } from './components/ChatInterface';
@@ -92,9 +92,15 @@ const Dashboard: React.FC<{ onNavigateToVoiceAgent: () => void }> = ({ onNavigat
 
 const App: React.FC = () => {
   const [view, setView] = useState<AppView>('landing');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   const handleGetStarted = () => setView('login');
-  const handleLogin = () => setView('dashboard');
+  const handleLogin = (userId: string, accessToken: string) => {
+    setUserId(userId);
+    setAccessToken(accessToken);
+    setView('dashboard');
+  };
   const handleNavigateToVoiceAgent = () => setView('voice-agent');
   const handleBackToDashboard = () => setView('dashboard');
 
@@ -107,7 +113,22 @@ const App: React.FC = () => {
       case 'dashboard':
         return <Dashboard onNavigateToVoiceAgent={handleNavigateToVoiceAgent} />;
       case 'voice-agent':
-        return <VoiceAgentPage onBack={handleBackToDashboard} />;
+        return userId && accessToken ? (
+          <VoiceAgentPage userId={userId} accessToken={accessToken} />
+        ) : (
+          <div className="flex items-center justify-center h-screen">
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">Authentication Required</h2>
+              <p className="text-gray-600 mb-4">Please login to access the Voice AI Assistant.</p>
+              <button
+                onClick={handleBackToDashboard}
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+              >
+                Back to Dashboard
+              </button>
+            </div>
+          </div>
+        );
       default:
         return <LandingPage onGetStarted={handleGetStarted} />;
     }

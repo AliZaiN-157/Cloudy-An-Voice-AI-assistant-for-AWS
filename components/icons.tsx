@@ -1,6 +1,4 @@
 
-import React from 'react';
-
 export const PRIMARY_COLOR = '#623CEA';
 
 export const Ec2Icon = ({ className }: { className?: string }) => (

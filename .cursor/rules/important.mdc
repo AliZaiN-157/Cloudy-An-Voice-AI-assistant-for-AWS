@@ -1,0 +1,44 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+
+Integration Rule File for Realtime Voice AI Assistant (Concise)
+This document outlines the core rules for frontend-backend integration, ensuring adherence to the backend-frontend-integration-spec and maintaining system integrity across development and production.
+
+1. Core Principles
+Spec Adherence: All integration must strictly follow the backend-frontend-integration-spec.
+
+Purpose-Driven: Every component must support guiding beginners with the voice AI assistant.
+
+Code Preservation: Do not alter working code unless justified and documented.
+
+2. Communication & Data Flow
+Real-time via WebSocket: Audio, screen share, and AI responses must use WebSocket.
+
+Management via REST: Authentication, user profiles, and history must use REST.
+
+Strict Data Models: All data payloads must conform to defined JSON schemas.
+
+Auth Token Required: access_token must be included in all WebSocket connections and REST Authorization headers.
+
+3. Stack Adherence
+Backend: FastAPI in Python only.
+
+Frontend: vite React
+
+Libraries: Prioritize specified libraries (e.g., native WebSocket, Web Audio API, Tailwind CSS).
+
+4. Development & Production Readiness
+Config: Use environment variables (.env.development, .env.production); never hardcode sensitive data.
+
+Logging: Implement comprehensive, structured logging for all events, configurable for dev/prod.
+
+Mock Data: data/mock_users.json is development-only; never deploy to production.
+
+Error Handling: Implement robust error handling and clear, user-friendly feedback.
+
+Security: Enforce all security best practices (HTTPS/WSS, token security, input validation, CORS, rate limiting, least privilege).
+
+CI/CD: All code must pass through CI/CD pipelines for consistent testing and deployment.

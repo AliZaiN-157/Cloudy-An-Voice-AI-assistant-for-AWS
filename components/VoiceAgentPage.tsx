@@ -1,249 +1,401 @@
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { AgentStatus } from '../types';
-import { createWebRTCService, WebRTCConfig, VoiceMessage } from '../services/webrtcService';
-import { PowerIcon, MicrophoneIcon, LoaderIcon, SpeakingIcon } from './icons';
-
-// Add SpeechRecognition types to window for browsers that support it under a prefix
-declare global {
-  interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
-  }
-}
-
-const StatusDisplay: React.FC<{ status: AgentStatus; transcript: string }> = ({ status, transcript }) => {
-    const getStatusInfo = () => {
-        switch (status) {
-            case 'listening':
-                return { icon: <MicrophoneIcon className="h-8 w-8 text-[#623CEA]" />, text: "Listening..." };
-            case 'processing':
-                return { icon: <LoaderIcon className="h-8 w-8 animate-spin text-[#623CEA]" />, text: "Cloudy is thinking..." };
-            case 'speaking':
-                return { icon: <SpeakingIcon className="h-8 w-8 text-[#623CEA]" />, text: "Cloudy is speaking..." };
-            case 'connecting':
-                return { icon: <LoaderIcon className="h-8 w-8 animate-spin text-[#623CEA]" />, text: "Connecting to voice service..." };
-            case 'connected':
-                return { icon: <MicrophoneIcon className="h-8 w-8 text-green-500" />, text: "Connected and ready" };
-            case 'disconnected':
-                return { icon: <MicrophoneIcon className="h-8 w-8 text-gray-400" />, text: "Disconnected" };
-            case 'error':
-                return { icon: <MicrophoneIcon className="h-8 w-8 text-red-500" />, text: "Sorry, an error occurred. Please try again." };
-            default: // idle
-                return { icon: <MicrophoneIcon className="h-8 w-8 text-gray-400" />, text: "Agent is idle" };
-        }
-    };
-    const { icon, text } = getStatusInfo();
-    return (
-        <div className="flex flex-col items-center gap-4 p-4 bg-white rounded-2xl shadow-md border border-gray-100 min-w-[320px]">
-            <div className="flex items-center gap-3">
-                {icon}
-                <p className="text-lg font-medium text-gray-700">{text}</p>
-            </div>
-            {transcript && status === 'processing' && (
-                <p className="text-gray-500 italic text-center">You said: "{transcript}"</p>
-            )}
-        </div>
-    )
-}
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  createLiveKitService, 
+  LiveKitService, 
+  LiveKitConfig, 
+  LiveKitCallbacks,
+  AudioSettings,
+  VideoSettings 
+} from '../services/livekitService';
+import { getLiveKitConfig, livekitConfig } from '../config/livekit';
 
 interface VoiceAgentPageProps {
-  onBack?: () => void;
+  userId: string;
+  accessToken: string;
 }
 
+interface Message {
+  id: string;
+  type: 'user' | 'ai';
+  text: string;
+  timestamp: Date;
+  audioData?: ArrayBuffer;
+}
 
-export const VoiceAgentPage: React.FC<VoiceAgentPageProps> = ({ onBack }) => {
-    const [isAgentActive, setIsAgentActive] = useState(false);
-    const [status, setStatus] = useState<AgentStatus>('idle');
-    const [transcript, setTranscript] = useState('');
-    const [voiceMessages, setVoiceMessages] = useState<VoiceMessage[]>([]);
-    
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const streamRef = useRef<MediaStream | null>(null);
-    const webrtcServiceRef = useRef<any>(null);
-    
-    // Check if API key is available
-    useEffect(() => {
-        if (!process.env.API_KEY) {
-            setStatus('error');
-            alert('API key not configured. Please set the API_KEY environment variable.');
-        }
-    }, []);
+const VoiceAgentPage: React.FC<VoiceAgentPageProps> = ({ userId, accessToken }) => {
+  const [liveKitService, setLiveKitService] = useState<LiveKitService | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isAudioCapturing, setIsAudioCapturing] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [roomState, setRoomState] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const audioLevelRef = useRef<HTMLDivElement>(null);
 
-    // Initialize WebRTC service
-    const initializeWebRTC = useCallback(async () => {
-        try {
-            const config: WebRTCConfig = {
-                serverUrl: process.env.VITE_WEBRTC_SERVER_URL || 'http://localhost:3001',
-                apiKey: process.env.API_KEY || ''
-            };
-            
-            const webrtcService = createWebRTCService(config);
-            webrtcServiceRef.current = webrtcService;
-            
-            // Set up callbacks
-            webrtcService.setCallbacks(
-                (message: VoiceMessage) => {
-                    setVoiceMessages(prev => [...prev, message]);
-                    if (message.type === 'ai') {
-                        setTranscript(message.text);
-                    }
-                },
-                (status: string) => {
-                    setStatus(status as AgentStatus);
-                },
-                (error: string) => {
-                    console.error('WebRTC error:', error);
-                    setStatus('error');
-                }
-            );
-            
-            await webrtcService.initialize();
-        } catch (error) {
-            console.error('Failed to initialize WebRTC:', error);
-            setStatus('error');
-        }
-    }, []);
+  // LiveKit configuration
+  const liveKitConfig: LiveKitConfig = getLiveKitConfig(userId);
 
-    // Initialize WebRTC when component mounts
-    useEffect(() => {
-        initializeWebRTC();
-        
-        return () => {
-            if (webrtcServiceRef.current) {
-                webrtcServiceRef.current.stopVoiceSession();
-            }
-        };
-    }, [initializeWebRTC]);
-    
-    const stopAgent = useCallback(async () => {
-        setIsAgentActive(false);
-        setStatus('idle');
-        setTranscript('');
-        setVoiceMessages([]);
-        
-        if (webrtcServiceRef.current) {
-            await webrtcServiceRef.current.stopVoiceSession();
-        }
-        
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-            streamRef.current = null;
-        }
-        if (videoRef.current) {
-            videoRef.current.srcObject = null;
-        }
-    }, []);
-    
-    const startAgent = async () => {
-        try {
-            setStatus('processing');
-            
-            // Request screen sharing permission
-            const displayStream = await navigator.mediaDevices.getDisplayMedia({ 
-                video: { cursor: "always" } as any, 
-                audio: false 
-            });
+  // LiveKit callbacks
+  const liveKitCallbacks: LiveKitCallbacks = {
+    onConnected: (room) => {
+      console.log('Connected to LiveKit room:', room);
+      setIsConnected(true);
+      setError(null);
+    },
+    onDisconnected: (reason) => {
+      console.log('Disconnected from LiveKit room:', reason);
+      setIsConnected(false);
+      setIsAudioCapturing(false);
+      setIsScreenSharing(false);
+    },
+    onParticipantConnected: (participant) => {
+      console.log('Participant connected:', participant.identity);
+      updateRoomState();
+    },
+    onParticipantDisconnected: (participant) => {
+      console.log('Participant disconnected:', participant.identity);
+      updateRoomState();
+    },
+    onTrackSubscribed: (track, publication, participant) => {
+      console.log('Track subscribed:', track.kind, 'from', participant.identity);
+    },
+    onTrackUnsubscribed: (track, publication, participant) => {
+      console.log('Track unsubscribed:', track.kind, 'from', participant.identity);
+    },
+    onDataReceived: (payload, participant) => {
+      console.log('Data received from', participant?.identity);
+    },
+    onAudioLevelChanged: (participant, level) => {
+      // Update audio level indicator
+      if (audioLevelRef.current) {
+        audioLevelRef.current.style.height = `${level * 100}%`;
+      }
+    },
+    onError: (error) => {
+      console.error('LiveKit error:', error);
+      setError(error.message);
+    },
+    onAIResponse: (text, audioData) => {
+      console.log('AI response:', text);
+      addMessage('ai', text, audioData);
+    },
+    onScreenShareStarted: () => {
+      setIsScreenSharing(true);
+    },
+    onScreenShareStopped: () => {
+      setIsScreenSharing(false);
+    }
+  };
 
-            if(videoRef.current && webrtcServiceRef.current) {
-                videoRef.current.srcObject = displayStream;
-                streamRef.current = displayStream;
-                displayStream.getVideoTracks()[0].onended = stopAgent; // Stop if user clicks browser "Stop sharing"
-                
-                setIsAgentActive(true);
-                setStatus('connecting');
-                
-                // Start WebRTC voice session
-                await webrtcServiceRef.current.startVoiceSession(displayStream);
-            }
-        } catch (err) {
-            console.error("Error starting agent:", err);
-            setStatus('error');
-            
-            if (err instanceof Error) {
-                if (err.name === 'NotAllowedError') {
-                    alert("Permission denied. Please allow screen sharing permissions to use the voice agent.");
-                } else {
-                    alert(`Error starting voice agent: ${err.message}`);
-                }
-            } else {
-                alert("Could not start screen sharing. Please allow permissions and try again.");
-            }
-            
-            setIsAgentActive(false);
-        }
+  useEffect(() => {
+    initializeLiveKit();
+    return () => {
+      if (liveKitService) {
+        liveKitService.disconnect();
+      }
     };
+  }, []);
 
-    const handleToggleAgent = () => {
-        if (isAgentActive) {
-            stopAgent();
-        } else {
-            startAgent();
-        }
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const initializeLiveKit = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const service = createLiveKitService(liveKitConfig);
+      service.setCallbacks(liveKitCallbacks);
+      
+      await service.connect();
+      setLiveKitService(service);
+      
+    } catch (err) {
+      console.error('Failed to initialize LiveKit:', err);
+      setError(err instanceof Error ? err.message : 'Failed to initialize LiveKit');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updateRoomState = () => {
+    if (liveKitService) {
+      setRoomState(liveKitService.getRoomState());
+    }
+  };
+
+  const addMessage = (type: 'user' | 'ai', text: string, audioData?: ArrayBuffer) => {
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      type,
+      text,
+      timestamp: new Date(),
+      audioData
     };
+    setMessages(prev => [...prev, newMessage]);
+  };
 
-    return (
-        <div className="relative flex flex-col h-full w-full items-center justify-center bg-gray-50 p-4 md:p-8 gap-6">
-            {onBack && (
-              <button onClick={onBack} className="absolute top-4 left-4 z-50 flex items-center gap-2 px-4 py-2 rounded-lg bg-black/50 text-white hover:bg-black/80 transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                Back to Dashboard
-              </button>
-            )}
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
-            <div className="text-center">
-                <h1 className="text-2xl md:text-3xl font-bold text-gray-800">AWS Voice Assistant</h1>
-                <p className="text-gray-600">Your real-time guide to the AWS console</p>
+  const startAudioCapture = async () => {
+    if (!liveKitService) return;
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const audioSettings: Partial<AudioSettings> = livekitConfig.audio;
+      
+      await liveKitService.startAudioCapture(audioSettings);
+      setIsAudioCapturing(true);
+      
+      addMessage('user', 'Started audio capture...');
+      
+    } catch (err) {
+      console.error('Failed to start audio capture:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start audio capture');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const stopAudioCapture = async () => {
+    if (!liveKitService) return;
+    
+    try {
+      await liveKitService.stopAudioCapture();
+      setIsAudioCapturing(false);
+      addMessage('user', 'Stopped audio capture');
+    } catch (err) {
+      console.error('Failed to stop audio capture:', err);
+      setError(err instanceof Error ? err.message : 'Failed to stop audio capture');
+    }
+  };
+
+  const startScreenShare = async () => {
+    if (!liveKitService) return;
+    
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const videoSettings: Partial<VideoSettings> = livekitConfig.screenShare;
+      
+      await liveKitService.startScreenShare(videoSettings);
+      
+    } catch (err) {
+      console.error('Failed to start screen share:', err);
+      setError(err instanceof Error ? err.message : 'Failed to start screen share');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const stopScreenShare = async () => {
+    if (!liveKitService) return;
+    
+    try {
+      await liveKitService.stopScreenShare();
+    } catch (err) {
+      console.error('Failed to stop screen share:', err);
+      setError(err instanceof Error ? err.message : 'Failed to stop screen share');
+    }
+  };
+
+  const sendDataToAI = async (data: any) => {
+    if (!liveKitService) return;
+    
+    try {
+      await liveKitService.sendDataToAI(data);
+    } catch (err) {
+      console.error('Failed to send data to AI:', err);
+      setError(err instanceof Error ? err.message : 'Failed to send data to AI');
+    }
+  };
+
+  const disconnect = async () => {
+    if (liveKitService) {
+      await liveKitService.disconnect();
+      setLiveKitService(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Voice AI Assistant</h1>
+            <p className="text-sm text-gray-600">Real-time voice interaction with AI</p>
+          </div>
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2">
+              <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-sm text-gray-600">
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </span>
             </div>
-            
-            <div className="w-full max-w-4xl aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border-4 border-white relative">
-                 <video ref={videoRef} autoPlay playsInline className="w-full h-full object-contain" muted />
-                 {!isAgentActive && (
-                     <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-black/50 p-4 text-center">
-                         <img src="https://i.ibb.co/6P8fCgC/cloudy-logo.png" alt="Cloudy Logo" className="w-20 h-20 mb-4"/>
-                         <p className="text-xl font-semibold">Your screen share will appear here</p>
-                         <p className="text-md mt-1 text-gray-300">Click "Start Session" to begin</p>
-                     </div>
-                 )}
-            </div>
-            
-            <canvas ref={canvasRef} className="hidden"></canvas>
-            
-            {/* Voice Messages Display */}
-            {voiceMessages.length > 0 && (
-                <div className="w-full max-w-2xl bg-white rounded-2xl shadow-md border border-gray-100 p-4 max-h-48 overflow-y-auto">
-                    <h3 className="text-lg font-semibold text-gray-700 mb-3">Conversation</h3>
-                    <div className="space-y-2">
-                        {voiceMessages.map((message, index) => (
-                            <div key={index} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-xs px-3 py-2 rounded-lg ${
-                                    message.type === 'user' 
-                                        ? 'bg-[#623CEA] text-white' 
-                                        : 'bg-gray-100 text-gray-800'
-                                }`}>
-                                    <p className="text-sm">{message.text}</p>
-                                    <p className="text-xs opacity-70 mt-1">
-                                        {new Date(message.timestamp).toLocaleTimeString()}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-            
-            <StatusDisplay status={status} transcript={transcript} />
-
             <button
-                onClick={handleToggleAgent}
-                className={`flex items-center justify-center gap-3 px-8 py-4 w-64 rounded-full text-lg font-semibold text-white shadow-lg transform hover:scale-105 transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-offset-2 ${
-                    isAgentActive ? 'bg-red-500 hover:bg-red-600 focus:ring-red-300' : `bg-[#623CEA] hover:bg-[#5028d9] focus:ring-[#623CEA]/50`
-                }`}
+              onClick={disconnect}
+              className="px-4 py-2 text-sm font-medium text-red-600 hover:text-red-700"
             >
-                <PowerIcon className="h-6 w-6" />
-                <span>{isAgentActive ? 'End Session' : 'Start Session'}</span>
+              Disconnect
             </button>
+          </div>
         </div>
-    );
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex">
+        {/* Chat Messages */}
+        <div className="flex-1 flex flex-col">
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                    message.type === 'user'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white text-gray-900 border border-gray-200'
+                  }`}
+                >
+                  <p className="text-sm">{message.text}</p>
+                  <p className="text-xs opacity-70 mt-1">
+                    {message.timestamp.toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Audio Level Indicator */}
+          <div className="px-6 py-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-4 h-8 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  ref={audioLevelRef}
+                  className="w-full bg-blue-500 transition-all duration-100"
+                  style={{ height: '0%' }}
+                ></div>
+              </div>
+              <span className="text-xs text-gray-600">
+                {isAudioCapturing ? 'Audio Level' : 'No Audio'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Controls Panel */}
+        <div className="w-80 bg-white border-l border-gray-200 p-6">
+          <div className="space-y-6">
+            {/* Connection Status */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Connection</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">Status:</span>
+                  <span className={`text-sm font-medium ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
+                    {isConnected ? 'Connected' : 'Disconnected'}
+                  </span>
+                </div>
+                {roomState && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">Participants:</span>
+                      <span className="text-sm font-medium">{roomState.participants.length}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-gray-600">AI Assistant:</span>
+                      <span className="text-sm font-medium">
+                        {roomState.aiParticipant ? 'Connected' : 'Not Connected'}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Audio Controls */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Audio</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={isAudioCapturing ? stopAudioCapture : startAudioCapture}
+                  disabled={!isConnected || isLoading}
+                  className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${
+                    isAudioCapturing
+                      ? 'bg-red-500 text-white hover:bg-red-600'
+                      : 'bg-blue-500 text-white hover:bg-blue-600'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {isLoading ? 'Loading...' : isAudioCapturing ? 'Stop Audio' : 'Start Audio'}
+                </button>
+              </div>
+            </div>
+
+            {/* Screen Share Controls */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Screen Share</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+                  disabled={!isConnected || isLoading}
+                  className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${
+                    isScreenSharing
+                      ? 'bg-red-500 text-white hover:bg-red-600'
+                      : 'bg-green-500 text-white hover:bg-green-600'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {isLoading ? 'Loading...' : isScreenSharing ? 'Stop Screen Share' : 'Start Screen Share'}
+                </button>
+              </div>
+            </div>
+
+            {/* AI Controls */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-900 mb-4">AI Assistant</h3>
+              <div className="space-y-3">
+                <button
+                  onClick={() => sendDataToAI({ type: 'start_session', user_id: userId })}
+                  disabled={!isConnected || isLoading}
+                  className="w-full px-4 py-2 bg-purple-500 text-white rounded-lg font-medium hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Start AI Session
+                </button>
+                <button
+                  onClick={() => sendDataToAI({ type: 'end_session' })}
+                  disabled={!isConnected || isLoading}
+                  className="w-full px-4 py-2 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  End AI Session
+                </button>
+              </div>
+            </div>
+
+            {/* Error Display */}
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
+
+export default VoiceAgentPage;
